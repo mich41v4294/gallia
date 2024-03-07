@@ -14,10 +14,7 @@ import psutil
 
 from gallia.command import AsyncScript
 from gallia.log import get_logger
-from gallia.services.uds.core.service import (
-    TesterPresentRequest,
-    TesterPresentResponse,
-)
+from gallia.services.uds.core.service import TesterPresentRequest, TesterPresentResponse
 from gallia.transports.doip import (
     DiagnosticMessage,
     DiagnosticMessageNegativeAckCodes,
@@ -74,6 +71,7 @@ class DoIPDiscoverer(AsyncScript):
         )
 
     # This is an ugly hack to circumvent AsyncScript's shortcomings regarding return codes
+
     def run(self, args: Namespace) -> int:
         return asyncio.run(self.main2(args))
 
@@ -97,7 +95,7 @@ class DoIPDiscoverer(AsyncScript):
         # Discover Hostname and Port
         tgt_hostname: str
         tgt_port: int
-        if target is not None and target.hostname is not None and target.port is not None:
+        if target is not None and target.hostname is not None and (target.port is not None):
             logger.notice("[📋] Skipping host/port discovery because given by --target")
             tgt_hostname = target.hostname
             tgt_port = target.port
@@ -121,10 +119,7 @@ class DoIPDiscoverer(AsyncScript):
         else:
             logger.notice("[🔍] Enumerating all RoutingActivationTypes")
 
-            (
-                rat_success,
-                rat_wrong_source,
-            ) = await self.enumerate_routing_activation_types(
+            rat_success, rat_wrong_source = await self.enumerate_routing_activation_types(
                 tgt_hostname,
                 tgt_port,
                 int(parse_qs(target.query)["src_addr"][0], 0)
@@ -145,13 +140,10 @@ class DoIPDiscoverer(AsyncScript):
                 f"doip://{tgt_hostname}:{tgt_port}?activation_type={rat:#x}&src_addr={parse_qs(target.query)['src_addr'][0]}"
                 for rat in rat_success
             ]
-
         else:
             logger.notice("[🔍] Enumerating all SourceAddresses")
             targets = await self.enumerate_source_addresses(
-                tgt_hostname,
-                tgt_port,
-                chain(rat_success, rat_wrong_source),
+                tgt_hostname, tgt_port, chain(rat_success, rat_wrong_source)
             )
 
         if len(targets) != 1:
@@ -176,38 +168,24 @@ class DoIPDiscoverer(AsyncScript):
         tgt_rat = int(parse_qs(target.query)["activation_type"][0], 0)
 
         await self.enumerate_target_addresses(
-            tgt_hostname,
-            tgt_port,
-            tgt_rat,
-            tgt_src,
-            args.start,
-            args.stop,
-            args.timeout,
+            tgt_hostname, tgt_port, tgt_rat, tgt_src, args.start, args.stop, args.timeout
         )
 
         logger.notice("[🛩️] All done, thanks for flying with us!")
         return 0
 
     async def enumerate_routing_activation_types(
-        self,
-        tgt_hostname: str,
-        tgt_port: int,
-        src_addr: int,
+        self, tgt_hostname: str, tgt_port: int, src_addr: int
     ) -> tuple[list[int], list[int]]:
         rat_not_unsupported: list[int] = []
         rat_success: list[int] = []
         rat_wrong_source: list[int] = []
         for routing_activation_type in range(0x100):
             try:
-                conn = await DoIPConnection.connect(
-                    tgt_hostname,
-                    tgt_port,
-                    src_addr,
-                    0xAFFE,
-                )
+                conn = await DoIPConnection.connect(tgt_hostname, tgt_port, src_addr, 0xAFFE)
             except OSError as e:
                 logger.error(f"[🚨] Mr. Stark I don't feel so good: {e}")
-                return rat_success, rat_wrong_source
+                return (rat_success, rat_wrong_source)
 
             try:
                 await conn.write_routing_activation_request(routing_activation_type)
@@ -223,16 +201,15 @@ class DoIPDiscoverer(AsyncScript):
 
                 if e.rac_code == RoutingActivationResponseCodes.UnknownSourceAddress:
                     rat_wrong_source.append(routing_activation_type)
-
             finally:
                 await conn.close()
 
         logger.notice(
             f"[💎] Look what RoutingActivationTypes I've found that are not 'unsupported': {', '.join([f'{x:#x}' for x in rat_not_unsupported])}"
         )
-        return rat_success, rat_wrong_source
+        return (rat_success, rat_wrong_source)
 
-    async def enumerate_target_addresses(  # noqa: PLR0913
+    async def enumerate_target_addresses(
         self,
         tgt_hostname: str,
         tgt_port: int,
@@ -241,7 +218,7 @@ class DoIPDiscoverer(AsyncScript):
         start: int,
         stop: int,
         timeout: None | float = None,
-    ) -> None:
+    ) -> None:  # noqa: PLR0913
         known_targets = []
         unreachable_targets = []
         responsive_targets = []
@@ -367,29 +344,24 @@ class DoIPDiscoverer(AsyncScript):
             f"[🧭] Check out the content of the log files at {self.artifacts_dir} as well!"
         )
 
-    async def create_DoIP_conn(  # noqa: PLR0913
+    async def create_DoIP_conn(
         self,
         hostname: str,
         port: int,
         routing_activation_type: int,
         src_addr: int,
         target_addr: int,
-    ) -> DoIPConnection:
+    ) -> DoIPConnection:  # noqa: PLR0913
         while True:
             try:
-                conn = await DoIPConnection.connect(
-                    hostname,
-                    port,
-                    src_addr,
-                    target_addr,
-                )
+                conn = await DoIPConnection.connect(hostname, port, src_addr, target_addr)
                 logger.info("[📫] Sending RoutingActivationRequest")
                 await conn.write_routing_activation_request(
                     RoutingActivationRequestTypes(routing_activation_type)
                 )
             except Exception as e:  # TODO this probably is too broad
                 logger.warning(
-                    f"[🫨] Got me some good errors when it should be working (dis an infinite loop): {e}"
+                    f"[\U0001fae8] Got me some good errors when it should be working (dis an infinite loop): {e}"
                 )
                 continue
             return conn
@@ -399,21 +371,18 @@ class DoIPDiscoverer(AsyncScript):
             hdr, payload = await conn.read_frame()
             if not isinstance(payload, DiagnosticMessage):
                 logger.warning(f"[🧨] Unexpected DoIP message: {hdr} {payload}")
-                return None, b""
+                return (None, b"")
             if payload.SourceAddress != conn.target_addr:
-                return payload.SourceAddress, payload.UserData
+                return (payload.SourceAddress, payload.UserData)
             if payload.TargetAddress != conn.src_addr:
                 logger.warning(
                     f"[🤌] You talking to me?! Unexpected DoIP target address: {payload.TargetAddress:#04x}"
                 )
                 continue
-            return None, payload.UserData
+            return (None, payload.UserData)
 
     async def enumerate_source_addresses(
-        self,
-        tgt_hostname: str,
-        tgt_port: int,
-        valid_routing_activation_types: Iterable[int],
+        self, tgt_hostname: str, tgt_port: int, valid_routing_activation_types: Iterable[int]
     ) -> list[str]:
         known_sourceAddresses: list[int] = []
         denied_sourceAddresses: list[int] = []
@@ -422,12 +391,7 @@ class DoIPDiscoverer(AsyncScript):
             valid_routing_activation_types, range(0x0000, 0x10000)
         ):
             try:
-                conn = await DoIPConnection.connect(
-                    tgt_hostname,
-                    tgt_port,
-                    source_address,
-                    0xAFFE,
-                )
+                conn = await DoIPConnection.connect(tgt_hostname, tgt_port, source_address, 0xAFFE)
             except OSError as e:
                 logger.error(f"[🚨] Mr. Stark I don't feel so good: {e}")
                 return []
@@ -447,7 +411,6 @@ class DoIPDiscoverer(AsyncScript):
                         )
 
                 continue
-
             finally:
                 await conn.close()
 
