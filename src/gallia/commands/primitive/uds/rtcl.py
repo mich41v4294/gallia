@@ -96,10 +96,10 @@ class RTCLPrimitive(UDSScanner):
             logger.warning("No instructions were given (start/stop/results)")
 
         if args.start:
-            resp: NegativeResponse | RoutineControlResponse = (
-                await self.ecu.routine_control_start_routine(
-                    args.routine_identifier, args.start_parameters
-                )
+            resp: (
+                NegativeResponse | RoutineControlResponse
+            ) = await self.ecu.routine_control_start_routine(
+                args.routine_identifier, args.start_parameters
             )
 
             if isinstance(resp, NegativeResponse):
